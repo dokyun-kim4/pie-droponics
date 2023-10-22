@@ -1,18 +1,43 @@
 #include <Arduino.h>
 
 // put function declarations here:
-int myFunction(int, int);
+const int ledPin = 5;
+int delayTime = 1000; // millisecond
 
-void setup() {
+uint32_t blinkTime;
+
+void setup()
+{
   // put your setup code here, to run once:
-  int result = myFunction(2, 3);
+  Serial.begin(9600);
+  pinMode(ledPin, OUTPUT);
+  blinkTime = millis();
 }
 
-void loop() {
-  // put your main code here, to run repeatedly:
+void inputSchedule()
+{
+  Serial.println("Enter light schedule (sec)");
+  int schedule = Serial.parseInt(); // in seconds
+  if (schedule != 0)
+  {
+    delayTime = 1000 * schedule;
+    Serial.println(delayTime);
+  }
 }
 
-// put function definitions here:
-int myFunction(int x, int y) {
-  return x + y;
+void loop()
+{
+  if (Serial.available() > 0)
+  {
+    inputSchedule();
+  }
+
+  uint32_t t;
+  t = millis();
+
+  if (t >= blinkTime + delayTime)
+  {
+    digitalWrite(ledPin, !digitalRead(ledPin));
+    blinkTime = t;
+  }
 }
