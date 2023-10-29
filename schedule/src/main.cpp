@@ -1,55 +1,44 @@
+#include <WiFi.h>
+#include "time.h"
 #include <Arduino.h>
 
-// put function declarations here:
-#define ledPin 45
-int onDelay = 2000; // millisecond
-int offDelay = 5000;
-bool isOn = false;
+const char *ssid = "OLIN-DEVICES";
+const char *password = "Engineering4Every1!";
 
-uint32_t prevMillis;
+const long gmtOffset_sec = -18000;
+const int daylightOffset_sec = 3600;
+
+const char *ntpServer = "pool.ntp.org";
 
 void setup()
 {
-  // put your setup code here, to run once:
-  Serial.begin(9600);
-  pinMode(ledPin, OUTPUT);
-  prevMillis = millis();
+  Serial.begin(115200);
+
+  // connect to WiFi
+  Serial.printf("Connecting to %s ", ssid);
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println(" CONNECTED");
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
 }
 
-void inputSchedule()
+void printLocalTime()
 {
-  Serial.println("Enter light schedule (sec)");
-  int schedule = Serial.parseInt(); // in seconds
-  if (schedule != 0)
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo))
   {
-    offDelay = 1000 * schedule;
-    Serial.printf("New delay: %d seconds \n", schedule);
+    Serial.println("Failed to obtain time");
+    return;
   }
+  Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
 }
 
 void loop()
 {
-  if (Serial.available() > 0)
-  {
-    inputSchedule();
-  }
-
-  uint32_t t;
-  int currentMillis = millis();
-
-  if (!isOn)
-  {
-    if (currentMillis - prevMillis >= offDelay)
-    {
-      prevMillis = currentMillis;
-      isOn = true;
-      neopixelWrite(ledPin, 255, 0, 0);
-    }
-  }
-  else if (currentMillis - prevMillis >= onDelay)
-  {
-    prevMillis = currentMillis;
-    isOn = false;
-    neopixelWrite(ledPin, 0, 0, 0);
-  }
+  delay(1000);
+  printLocalTime();
 }
