@@ -1,6 +1,7 @@
 #include <WiFi.h>
 #include "time.h"
 #include <Arduino.h>
+#include "password.h"
 
 #define ledPin 45
 
@@ -18,7 +19,7 @@ void setup()
 
   // connect to WiFi
   Serial.printf("Connecting to %s ", ssid);
-  WiFi.begin(ssid, password);
+  WiFi.begin(ssid, PASSWORD);
   while (WiFi.status() != WL_CONNECTED)
   {
     delay(500);
