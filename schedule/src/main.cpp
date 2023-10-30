@@ -4,13 +4,13 @@
 
 #define ledPin 45
 
+// WIFI CREDENTIALS
 const char *ssid = "OLIN-DEVICES";
-const char *password = "Engineering4Every1!";
+const char *ntpServer = "pool.ntp.org";
 
+// CONSTANTS FOR TIME OFFSET
 const long gmtOffset_sec = -18000;
 const int daylightOffset_sec = 3600;
-
-const char *ntpServer = "pool.ntp.org";
 
 void setup()
 {
@@ -25,6 +25,8 @@ void setup()
     Serial.print(".");
   }
   Serial.println(" CONNECTED");
+
+  // GET TIME FROM WIFI
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
 
   pinMode(ledPin, OUTPUT);
@@ -47,17 +49,14 @@ void lightSchedule(int startHr, int startMin, int durationHr, int durationMin)
   startTime.tm_hour = startHr;
   startTime.tm_min = startMin;
   time_t startTimestamp = mktime(&startTime);
-  String startDisp = "Start at: " + String(startTime.tm_hour) + ":" + String(startTime.tm_min) + ":" + String(startTime.tm_sec);
-  Serial.println(startDisp);
 
   // END TIME
   struct tm endTime = startTime;
   endTime.tm_hour += durationHr;
   endTime.tm_min += durationMin;
   time_t endTimestamp = mktime(&endTime);
-  String endDisp = "End at: " + String(endTime.tm_hour) + ":" + String(endTime.tm_min) + ":" + String(endTime.tm_sec);
-  Serial.println(endDisp);
 
+  // CHECK IF TIME IS WITHIN SPECIFIED DURATION
   bool lightOn = (now >= startTimestamp && now < endTimestamp);
 
   if (lightOn)
@@ -75,5 +74,5 @@ void lightSchedule(int startHr, int startMin, int durationHr, int durationMin)
 void loop()
 {
   delay(1000);
-  lightSchedule(19, 04, 0, 1);
+  lightSchedule(15, 20, 0, 1);
 }
