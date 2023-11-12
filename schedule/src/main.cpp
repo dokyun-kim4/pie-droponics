@@ -24,13 +24,9 @@ void schedulePump()
     Serial.printf("New pump delay: %d seconds \n", schedule);
   }
 }
-void loop()
-{
-  if (Serial.available() > 0)
-  {
-    schedulePump();
-  }
 
+void runPump()
+{
   uint32_t t;
   t = millis();
   int currentMillis = millis();
@@ -50,4 +46,13 @@ void loop()
     isOn = false;
     digitalWrite(pumpPin, LOW);
   }
+}
+
+void loop()
+{
+  if (Serial.available() > 0)
+  {
+    schedulePump();
+  }
+  runPump();
 }
