@@ -124,8 +124,8 @@ void setup()
 
 void loop()
 {
-  publishMessage('temperature');
-  publishMessage('humidity');
+  publishMessage(String('temperature'));
+  publishMessage(String('humidity'));
 
   client.loop();
   delay(5000);
