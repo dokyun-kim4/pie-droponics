@@ -96,16 +96,22 @@ void connectAWS()
   Serial.println("AWS IoT Connected!");
 }
 
-void publishMessage()
+void publishMessage(String sensorType)
 {
+
   StaticJsonDocument<200> doc;
   TempHumidReading tempHumidReading = getTempHumid();
   doc["value"] = tempHumidReading.first;
-  // doc["msg"]["humidity"] = tempHumidReading.second;
-
   char jsonBuffer[512];
   serializeJson(doc, jsonBuffer); // print to client
   client.publish(String(AWS_IOT_PUBLISH_TOPIC) + String("temperature"), jsonBuffer);
+  Serial.println(doc.as<String>());
+
+  StaticJsonDocument<200> doc;
+  doc["value"] = tempHumidReading.second;
+  char jsonBuffer[512];
+  serializeJson(doc, jsonBuffer); // print to client
+  client.publish(String(AWS_IOT_PUBLISH_TOPIC) + String("humidity"), jsonBuffer);
   Serial.println(doc.as<String>());
 }
 
@@ -118,7 +124,9 @@ void setup()
 
 void loop()
 {
-  publishMessage();
+  publishMessage('temperature');
+  publishMessage('humidity');
+
   client.loop();
   delay(5000);
 }
