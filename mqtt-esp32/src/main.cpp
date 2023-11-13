@@ -9,8 +9,8 @@
 Adafruit_SHT4x sht4 = Adafruit_SHT4x();
 
 // The MQTT topics that this device should publish/subscribe
-#define AWS_IOT_PUBLISH_TOPIC "test/sub"
-#define AWS_IOT_SUBSCRIBE_TOPIC "test/pub"
+#define AWS_IOT_PUBLISH_TOPIC "sensor/"
+#define AWS_IOT_SUBSCRIBE_TOPIC "cmd/"
 
 WiFiClientSecure net = WiFiClientSecure();
 MQTTClient client = MQTTClient(256);
@@ -55,8 +55,8 @@ void messageHandler(String &topic, String &payload)
 void connectAWS()
 {
   WiFi.mode(WIFI_STA);
-  // WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  WiFi.begin("OpenWireless", NULL);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  // WiFi.begin("OpenWireless", NULL);
 
   Serial.println("Connecting to Wi-Fi");
 
@@ -100,13 +100,12 @@ void publishMessage()
 {
   StaticJsonDocument<200> doc;
   TempHumidReading tempHumidReading = getTempHumid();
-  doc["id"] = String(random(1000));
-  doc["msg"] = tempHumidReading.first;
+  doc["value"] = tempHumidReading.first;
   // doc["msg"]["humidity"] = tempHumidReading.second;
 
   char jsonBuffer[512];
   serializeJson(doc, jsonBuffer); // print to client
-  client.publish(AWS_IOT_PUBLISH_TOPIC, jsonBuffer);
+  client.publish(String(AWS_IOT_PUBLISH_TOPIC) + String("temperature"), jsonBuffer);
   Serial.println(doc.as<String>());
 }
 
