@@ -5,6 +5,7 @@
 #include <ArduinoJson.h>
 #include "WiFi.h"
 #include "Adafruit_SHT4x.h"
+#include <hp_BH1750.h>
 
 Adafruit_SHT4x sht4 = Adafruit_SHT4x();
 
@@ -12,9 +13,35 @@ Adafruit_SHT4x sht4 = Adafruit_SHT4x();
 #define AWS_IOT_PUBLISH_TOPIC "sensor/"
 #define AWS_IOT_SUBSCRIBE_TOPIC "cmd/"
 
+hp_BH1750 BH1750; // Luminance sensor
+
 WiFiClientSecure net = WiFiClientSecure();
 MQTTClient client = MQTTClient(256);
-int id = 0;
+
+StaticJsonDocument<200> doc;
+char jsonBuffer[512];
+
+void setupBH1750()
+{
+  bool avail = BH1750.begin(BH1750_TO_GROUND); // BH1750_TO_GROUND or BH1750_TO_VCC for addr pin
+  if (!avail)
+  {
+    Serial.println("No BH1750 sensor found!");
+    while (1)
+      delay(1);
+  }
+
+  // BH1750.calibrateTiming();  //uncomment this line if you want to speed up your sensor
+  Serial.printf("conversion time: %dms\n", BH1750.getMtregTime());
+  BH1750.start(); // start the first measurement in setup
+}
+
+float getLuminance()
+{
+  BH1750.start();
+  float lux = BH1750.getLux();
+  return lux;
+}
 
 void setupSHT40()
 {
@@ -96,37 +123,54 @@ void connectAWS()
   Serial.println("AWS IoT Connected!");
 }
 
-void publishMessage(String sensorType)
+void publishMessage(String sensorType, StaticJsonDocument<200> doc, char *payload)
 {
-
-  StaticJsonDocument<200> doc;
-  TempHumidReading tempHumidReading = getTempHumid();
-  doc["value"] = tempHumidReading.first;
-  char jsonBuffer[512];
-  serializeJson(doc, jsonBuffer); // print to client
-  client.publish(String(AWS_IOT_PUBLISH_TOPIC) + String("temperature"), jsonBuffer);
-  Serial.println(doc.as<String>());
-
-  StaticJsonDocument<200> doc;
-  doc["value"] = tempHumidReading.second;
-  char jsonBuffer[512];
-  serializeJson(doc, jsonBuffer); // print to client
-  client.publish(String(AWS_IOT_PUBLISH_TOPIC) + String("humidity"), jsonBuffer);
-  Serial.println(doc.as<String>());
+  if (sensorType == "temperature")
+  {
+    TempHumidReading tempHumidReading = getTempHumid();
+    doc["value"] = tempHumidReading.first;
+    serializeJson(doc, jsonBuffer);
+    client.publish(String(AWS_IOT_PUBLISH_TOPIC) + String("temperature"), jsonBuffer);
+    Serial.println(doc.as<String>());
+  }
+  else if (sensorType == "humidity")
+  {
+    TempHumidReading tempHumidReading = getTempHumid();
+    doc["value"] = tempHumidReading.second;
+    serializeJson(doc, jsonBuffer);
+    client.publish(String(AWS_IOT_PUBLISH_TOPIC) + String("humidity"), jsonBuffer);
+    Serial.println(doc.as<String>());
+  }
+  else if (sensorType == "luminance")
+  {
+    float lux = getLuminance();
+    doc["value"] = lux;
+    serializeJson(doc, jsonBuffer);
+    client.publish(String(AWS_IOT_PUBLISH_TOPIC) + String("luminance"), jsonBuffer);
+    Serial.println(doc.as<String>());
+  }
 }
 
 void setup()
 {
-  Serial.begin(9600);
+  Serial.begin(115200);
   connectAWS();
   setupSHT40();
+  setupBH1750();
 }
 
 void loop()
 {
-  publishMessage(String('temperature'));
-  publishMessage(String('humidity'));
-
+  publishMessage(String('temperature'), doc, jsonBuffer);
+  doc.clear();                               // clear the JSON document for reuse
+  memset(jsonBuffer, 0, sizeof(jsonBuffer)); // clear the char array
+  publishMessage(String('humidity'), doc, jsonBuffer);
+  doc.clear();                               // clear the JSON document for reuse
+  memset(jsonBuffer, 0, sizeof(jsonBuffer)); // clear the char array
+  publishMessage(String('luminance'), doc, jsonBuffer);
+  doc.clear();                               // clear the JSON document for reuse
+  memset(jsonBuffer, 0, sizeof(jsonBuffer)); // clear the char array
   client.loop();
-  delay(5000);
+
+  delay(3000);
 }
