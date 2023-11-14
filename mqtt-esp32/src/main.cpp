@@ -69,6 +69,13 @@ typedef std::pair<float, float> TempHumidReading;
 // Function to get temperature and humidity readings
 TempHumidReading getTempHumid()
 {
+  if (!sht4.begin())
+  {
+    Serial.println("SHT4x sensor not setup or disconnected!");
+    while (1)
+      delay(1);
+  }
+
   sensors_event_t humidity, temp;
   sht4.getEvent(&humidity, &temp); // Populate temp and humidity objects with fresh data
   return {temp.temperature, humidity.relative_humidity};
@@ -161,13 +168,14 @@ void setup()
 
 void loop()
 {
-  publishMessage(String('temperature'), doc, jsonBuffer);
+  String sensorTypes[] = {"temperature", "humidity", "luminance"};
+  publishMessage(sensorTypes[0], doc, jsonBuffer);
   doc.clear();                               // clear the JSON document for reuse
   memset(jsonBuffer, 0, sizeof(jsonBuffer)); // clear the char array
-  publishMessage(String('humidity'), doc, jsonBuffer);
+  publishMessage(sensorTypes[1], doc, jsonBuffer);
   doc.clear();                               // clear the JSON document for reuse
   memset(jsonBuffer, 0, sizeof(jsonBuffer)); // clear the char array
-  publishMessage(String('luminance'), doc, jsonBuffer);
+  publishMessage(sensorTypes[2], doc, jsonBuffer);
   doc.clear();                               // clear the JSON document for reuse
   memset(jsonBuffer, 0, sizeof(jsonBuffer)); // clear the char array
   client.loop();
