@@ -1,7 +1,6 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include "time.h"
-#include <Arduino.h>
 #include "../include/secrets.h"
 #include <WiFiClientSecure.h>
 #include <MQTTClient.h>
@@ -22,120 +21,134 @@ MQTTClient client = MQTTClient(256);
 #define lightPin 11
 
 uint32_t pumpPrevMillis;
-char *pumpStartTime = "1100"; // HHMM format
-int pumpOnDuration = 1000;    // how long to turn on
-int pumpOffDuration = 2000;   // how long to turn off
+const char *pumpStartTime = "1551"; // HHMM format
+int pumpOnDuration = 1000;          // how long to turn on
+int pumpOffDuration = 2000;         // how long to turn off
 bool pumpIsOn = false;
 
 uint32_t lightPrevMillis;
-char *lightStartTime = "1100";
+const char *lightStartTime = "1551";
 int lightOnDuration = 5000;
 int lightOffDuration = 10000;
 bool lightIsOn = false;
 
-// AWS functions
+// -------------- Time setup ----------------------- //
+const char *ntpServer = "pool.ntp.org";
 
-void setupSHT40()
-{
-  // Setup for temp/humidity sensor
-  if (!sht4.begin())
-  {
-    Serial.println("Couldn't find SHT4x sensor");
-    while (1)
-      delay(1);
-  }
-  Serial.println("Found SHT4x sensor");
-  Serial.print("Serial number 0x");
-  Serial.println(sht4.readSerial(), HEX);
+// CONSTANTS FOR TIME OFFSET
+const long gmtOffset_sec = -18000;
+const int daylightOffset_sec = 3600;
 
-  // You can have 3 different precisions, higher precision takes longer
-  sht4.setPrecision(SHT4X_HIGH_PRECISION);
+// -------------------- AWS functions ----------------//
+// void setupSHT40()
+// {
+//   // Setup for temp/humidity sensor
+//   if (!sht4.begin())
+//   {
+//     Serial.println("Couldn't find SHT4x sensor");
+//     while (1)
+//       delay(1);
+//   }
+//   Serial.println("Found SHT4x sensor");
+//   Serial.print("Serial number 0x");
+//   Serial.println(sht4.readSerial(), HEX);
 
-  // You can have 6 different heater settings
-  sht4.setHeater(SHT4X_NO_HEATER);
-}
+//   // You can have 3 different precisions, higher precision takes longer
+//   sht4.setPrecision(SHT4X_HIGH_PRECISION);
 
-// Create an alias for temperature and humidity readings
-typedef std::pair<float, float> TempHumidReading;
+//   // You can have 6 different heater settings
+//   sht4.setHeater(SHT4X_NO_HEATER);
+// }
 
-// Function to get temperature and humidity readings
-TempHumidReading getTempHumid()
-{
-  sensors_event_t humidity, temp;
-  sht4.getEvent(&humidity, &temp); // Populate temp and humidity objects with fresh data
-  return {temp.temperature, humidity.relative_humidity};
-}
+// // Create an alias for temperature and humidity readings
+// typedef std::pair<float, float> TempHumidReading;
 
-void messageHandler(String &topic, String &payload)
-{
-  StaticJsonDocument<200> doc;
-  deserializeJson(doc, payload);
-  const char *target = doc["target"];
-  const char *startTime = doc["start_time"];
-  const char *onDuration = doc["on_interval"];
-  const char *offDuration = doc["off_interval"];
+// // Function to get temperature and humidity readings
+// TempHumidReading getTempHumid()
+// {
+//   sensors_event_t humidity, temp;
+//   sht4.getEvent(&humidity, &temp); // Populate temp and humidity objects with fresh data
+//   return {temp.temperature, humidity.relative_humidity};
+// }
 
-  if (strcmp(target, "pump") == 0)
-  {
-    pumpStartTime = startTime;
-  }
-}
+// void messageHandler(String &topic, String &payload)
+// {
+//   StaticJsonDocument<200> doc;
+//   deserializeJson(doc, payload);
+//   const char *target = doc["target"];
+//   int onDuration = int(doc["on_interval"]);
+//   int offDuration = int(doc["off_interval"]);
 
-void connectAWS()
-{
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+//   if (strcmp(target, "pump") == 0)
+//   {
+//     pumpStartTime = doc["start_time"];
+//     pumpOnDuration = int(onDuration);
+//     pumpOffDuration = int(offDuration);
+//   }
+//   else if (strcmp(target, "light") == 0)
+//   {
+//     lightStartTime = doc["start_time"];
 
-  Serial.println("Connecting to Wi-Fi");
+//     lightOnDuration = int(onDuration);
+//     lightOffDuration = int(offDuration);
+//   }
+// }
 
-  while (WiFi.status() != WL_CONNECTED)
-  {
-    delay(500);
-    Serial.print(".");
-  }
+// void connectAWS()
+// {
+//   WiFi.mode(WIFI_STA);
+//   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
-  // Configure WiFiClientSecure to use the AWS IoT device credentials
-  net.setCACert(AWS_CERT_CA);
-  net.setCertificate(AWS_CERT_CRT);
-  net.setPrivateKey(AWS_CERT_PRIVATE);
+//   Serial.println("Connecting to Wi-Fi");
 
-  // Connect to the MQTT broker on the AWS endpoint we defined earlier
-  client.begin(AWS_IOT_ENDPOINT, 8883, net);
+//   while (WiFi.status() != WL_CONNECTED)
+//   {
+//     delay(500);
+//     Serial.print(".");
+//   }
 
-  // Create a message handler
-  client.onMessage(messageHandler);
+//   // Configure WiFiClientSecure to use the AWS IoT device credentials
+//   net.setCACert(AWS_CERT_CA);
+//   net.setCertificate(AWS_CERT_CRT);
+//   net.setPrivateKey(AWS_CERT_PRIVATE);
 
-  Serial.print("Connecting to AWS IOT");
+//   // Connect to the MQTT broker on the AWS endpoint we defined earlier
+//   client.begin(AWS_IOT_ENDPOINT, 8883, net);
 
-  while (!client.connect(THINGNAME))
-  {
-    Serial.print(".");
-    delay(100);
-  }
+//   // Create a message handler
+//   client.onMessage(messageHandler);
 
-  if (!client.connected())
-  {
-    Serial.println("AWS IoT Timeout!");
-    return;
-  }
+//   Serial.print("Connecting to AWS IOT");
 
-  // Subscribe to a topic
-  client.subscribe(AWS_IOT_SUBSCRIBE_TOPIC);
-  Serial.println("AWS IoT Connected!");
-}
+//   while (!client.connect(THINGNAME))
+//   {
+//     Serial.print(".");
+//     delay(100);
+//   }
 
-void publishMessage()
-{
-  StaticJsonDocument<200> doc;
-  doc["time"] = millis();
-  TempHumidReading tempHumidReading = getTempHumid();
-  doc["temp"] = tempHumidReading.first;
-  doc["humidity"] = tempHumidReading.second;
+//   if (!client.connected())
+//   {
+//     Serial.println("AWS IoT Timeout!");
+//     return;
+//   }
 
-  char jsonBuffer[512];
-  serializeJson(doc, jsonBuffer); // print to client
-  client.publish(AWS_IOT_PUBLISH_TOPIC, jsonBuffer);
-}
+//   // Subscribe to a topic
+//   client.subscribe(AWS_IOT_SUBSCRIBE_TOPIC);
+//   Serial.println("AWS IoT Connected!");
+// }
+
+// void publishMessage()
+// {
+//   StaticJsonDocument<200> doc;
+//   doc["time"] = millis();
+//   TempHumidReading tempHumidReading = getTempHumid();
+//   doc["temp"] = tempHumidReading.first;
+//   doc["humidity"] = tempHumidReading.second;
+
+//   char jsonBuffer[512];
+//   serializeJson(doc, jsonBuffer); // print to client
+//   client.publish(AWS_IOT_PUBLISH_TOPIC, jsonBuffer);
+// }
 
 // -------------------- ESP control functions ------------ //
 
@@ -151,63 +164,101 @@ void connectWifi()
   Serial.println(" CONNECTED");
 }
 
-void setup()
-{
-  Serial.begin(115200);
-  pinMode(pumpPin, OUTPUT);
-  pinMode(lightPin, OUTPUT);
-  pumpPrevMillis = millis();
-  lightPrevMillis = millis()
-}
-
 void runPump()
 {
-  uint32_t t;
-  t = millis();
-  int currentMillis = millis();
-
-  if (!pumpIsOn)
+  time_t now;
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo))
   {
-    if (currentMillis - pumpPrevMillis >= pumpOffDuration)
-    {
-      lightPrevMillis = currentMillis;
-      pumpIsOn = true;
-      digitalWrite(pumpPin, HIGH);
-    }
+    Serial.println("Failed to obtain time");
+    return;
   }
-  else if (currentMillis - pumpPrevMillis >= pumpOnDuration)
+  now = mktime(&timeinfo);
+  Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
+
+  // START TIME
+  struct tm pumpStartTimeStruct = timeinfo;
+
+  // Convert HHMM format to hour and minutes
+  char str[5];
+  strncpy(str, pumpStartTime, 2);
+  pumpStartTimeStruct.tm_hour = atoi(str);
+  strcpy(str, pumpStartTime);
+  pumpStartTimeStruct.tm_min = atoi(pumpStartTime + 2);
+  time_t pumpStartTimestamp = mktime(&pumpStartTimeStruct);
+
+  // END TIME
+  time_t pumpEndTimestamp = pumpStartTimestamp + pumpOnDuration / 1000;
+  if (pumpEndTimestamp < pumpStartTimestamp)
   {
-    pumpPrevMillis = currentMillis;
-    pumpIsOn = false;
-    digitalWrite(pumpPin, LOW);
+    // Handle day change
+    pumpEndTimestamp += 24 * 60 * 60; // Add one day in seconds
+  }
+
+  // CHECK IF TIME IS WITHIN SPECIFIED DURATION
+  bool pumpShouldBeOn = (now >= pumpStartTimestamp && now < pumpEndTimestamp);
+
+  if (pumpShouldBeOn != pumpIsOn)
+  {
+    pumpIsOn = pumpShouldBeOn;
+    digitalWrite(pumpPin, pumpIsOn ? HIGH : LOW);
+    Serial.println(pumpIsOn ? "Pump ON" : "Pump OFF");
   }
 }
 
 void runLight()
 {
-  uint32_t t;
-  t = millis();
-  int currentMillis = millis();
+  time_t now;
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo))
+  {
+    Serial.println("Failed to obtain time");
+    return;
+  }
+  now = mktime(&timeinfo);
+  Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
 
-  if (!pumpIsOn)
+  // START TIME
+  struct tm lightStartTimeStruct = timeinfo;
+
+  // Convert HHMM format to hour and minutes
+  char str[5];
+  strncpy(str, lightStartTime, 2);
+  lightStartTimeStruct.tm_hour = atoi(str);
+  strcpy(str, lightStartTime);
+  lightStartTimeStruct.tm_min = atoi(lightStartTime + 2);
+  time_t lightStartTimestamp = mktime(&lightStartTimeStruct);
+
+  // END TIME
+  time_t lightEndTimestamp = lightStartTimestamp + lightOnDuration / 1000;
+  if (lightEndTimestamp < lightStartTimestamp)
   {
-    if (currentMillis - lightPrevMillis >= lightOffDuration)
-    {
-      lightPrevMillis = currentMillis;
-      lightIsOn = true;
-      digitalWrite(lightPin, HIGH);
-    }
+    // Handle day change
+    lightEndTimestamp += 24 * 60 * 60; // Add one day in seconds
   }
-  else if (currentMillis - lightPrevMillis >= lightOffDuration)
+
+  // CHECK IF TIME IS WITHIN SPECIFIED DURATION
+  bool lightShouldBeOn = (now >= lightStartTimestamp && now < lightEndTimestamp);
+
+  if (lightShouldBeOn != lightIsOn)
   {
-    lightPrevMillis = currentMillis;
-    lightIsOn = false;
-    digitalWrite(pumpPin, LOW);
+    lightIsOn = lightShouldBeOn;
+    digitalWrite(lightPin, lightIsOn ? HIGH : LOW);
+    Serial.println(lightIsOn ? "Light ON" : "Light OFF");
   }
+}
+
+//-------------------------- SETUP and LOOP ------------ //
+void setup()
+{
+  Serial.begin(115200);
+  pinMode(pumpPin, OUTPUT);
+  pinMode(lightPin, OUTPUT);
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
 }
 
 void loop()
 {
   runLight();
-  runPump();
+  // runPump();
 }
