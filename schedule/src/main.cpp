@@ -17,24 +17,19 @@ WiFiClientSecure net = WiFiClientSecure();
 MQTTClient client = MQTTClient(256);
 
 // --------------- ESP setup -------------------------//
-#define pumpPin 10
-#define lightPin 11
+#define pumpPin 13
+#define lightPin 14
 
-uint32_t pumpPrevMillis;
-const char *pumpStartTime = "1551"; // HHMM format
-int pumpOnDuration = 1000;          // how long to turn on
-int pumpOffDuration = 2000;         // how long to turn off
-bool pumpIsOn = false;
+uint32_t prevMillis;
+int pumpOnDuration = 3000;  // how long to turn on
+int pumpOffDuration = 1000; // how long to turn off
+bool pumpIsOff = true;
 
-uint32_t lightPrevMillis;
-const char *lightStartTime = "1551";
-int lightOnDuration = 5000;
-int lightOffDuration = 10000;
-bool lightIsOn = false;
+const char *lightStartTime = "2002";
+const char *lightEndTime = "2010";
 
 // -------------- Time setup ----------------------- //
 const char *ntpServer = "pool.ntp.org";
-
 // CONSTANTS FOR TIME OFFSET
 const long gmtOffset_sec = -18000;
 const int daylightOffset_sec = 3600;
@@ -151,7 +146,6 @@ const int daylightOffset_sec = 3600;
 // }
 
 // -------------------- ESP control functions ------------ //
-
 void connectWifi()
 {
   Serial.printf("Connecting to %s ", WIFI_SSID);
@@ -164,45 +158,34 @@ void connectWifi()
   Serial.println(" CONNECTED");
 }
 
+void setup()
+{
+  Serial.begin(115200);
+  pinMode(pumpPin, OUTPUT);
+  pinMode(lightPin, OUTPUT);
+  connectWifi();
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+}
+
 void runPump()
 {
-  time_t now;
-  struct tm timeinfo;
-  if (!getLocalTime(&timeinfo))
+  int currentMillis = millis();
+
+  if (pumpIsOff)
   {
-    Serial.println("Failed to obtain time");
-    return;
+
+    if (currentMillis - prevMillis >= pumpOffDuration)
+    {
+      pumpIsOff = false;
+      prevMillis = currentMillis;
+      digitalWrite(pumpPin, HIGH);
+    }
   }
-  now = mktime(&timeinfo);
-  Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
-
-  // START TIME
-  struct tm pumpStartTimeStruct = timeinfo;
-
-  // Convert HHMM format to hour and minutes
-  char str[5];
-  strncpy(str, pumpStartTime, 2);
-  pumpStartTimeStruct.tm_hour = atoi(str);
-  strcpy(str, pumpStartTime);
-  pumpStartTimeStruct.tm_min = atoi(pumpStartTime + 2);
-  time_t pumpStartTimestamp = mktime(&pumpStartTimeStruct);
-
-  // END TIME
-  time_t pumpEndTimestamp = pumpStartTimestamp + pumpOnDuration / 1000;
-  if (pumpEndTimestamp < pumpStartTimestamp)
+  else if (currentMillis - prevMillis >= pumpOnDuration)
   {
-    // Handle day change
-    pumpEndTimestamp += 24 * 60 * 60; // Add one day in seconds
-  }
-
-  // CHECK IF TIME IS WITHIN SPECIFIED DURATION
-  bool pumpShouldBeOn = (now >= pumpStartTimestamp && now < pumpEndTimestamp);
-
-  if (pumpShouldBeOn != pumpIsOn)
-  {
-    pumpIsOn = pumpShouldBeOn;
-    digitalWrite(pumpPin, pumpIsOn ? HIGH : LOW);
-    Serial.println(pumpIsOn ? "Pump ON" : "Pump OFF");
+    pumpIsOff = true;
+    prevMillis = currentMillis;
+    digitalWrite(pumpPin, LOW);
   }
 }
 
@@ -216,7 +199,6 @@ void runLight()
     return;
   }
   now = mktime(&timeinfo);
-  Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
 
   // START TIME
   struct tm lightStartTimeStruct = timeinfo;
@@ -227,38 +209,40 @@ void runLight()
   lightStartTimeStruct.tm_hour = atoi(str);
   strcpy(str, lightStartTime);
   lightStartTimeStruct.tm_min = atoi(lightStartTime + 2);
+  lightStartTimeStruct.tm_sec = 0;
   time_t lightStartTimestamp = mktime(&lightStartTimeStruct);
 
-  // END TIME
-  time_t lightEndTimestamp = lightStartTimestamp + lightOnDuration / 1000;
-  if (lightEndTimestamp < lightStartTimestamp)
+  struct tm lightEndTimeStruct = timeinfo;
+
+  char str1[5];
+  strncpy(str1, lightEndTime, 2);
+  lightEndTimeStruct.tm_hour = atoi(str1);
+  strcpy(str1, lightEndTime);
+  lightEndTimeStruct.tm_min = atoi(lightEndTime + 2);
+  lightEndTimeStruct.tm_sec = 0;
+  time_t lightEndTimestamp = mktime(&lightEndTimeStruct);
+
+  // Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
+  // Serial.println(&lightStartTimeStruct, "%A, %B %d %Y %H:%M:%S");
+  // Serial.println(&lightEndTimeStruct, "%A, %B %d %Y %H:%M:%S");
+
+  if (now >= lightStartTimestamp && now < lightEndTimestamp)
   {
-    // Handle day change
-    lightEndTimestamp += 24 * 60 * 60; // Add one day in seconds
+    Serial.println("It is time");
+    digitalWrite(lightPin, HIGH);
   }
-
-  // CHECK IF TIME IS WITHIN SPECIFIED DURATION
-  bool lightShouldBeOn = (now >= lightStartTimestamp && now < lightEndTimestamp);
-
-  if (lightShouldBeOn != lightIsOn)
+  else
   {
-    lightIsOn = lightShouldBeOn;
-    digitalWrite(lightPin, lightIsOn ? HIGH : LOW);
-    Serial.println(lightIsOn ? "Light ON" : "Light OFF");
+    Serial.println("It is not time");
+    digitalWrite(lightPin, LOW);
   }
 }
 
-//-------------------------- SETUP and LOOP ------------ //
-void setup()
-{
-  Serial.begin(115200);
-  pinMode(pumpPin, OUTPUT);
-  pinMode(lightPin, OUTPUT);
-  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-}
+// -------------------------- LOOP ------------------------ //
 
 void loop()
 {
+  runPump();
+  delay(1000);
   runLight();
-  // runPump();
 }
