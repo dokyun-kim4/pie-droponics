@@ -5,11 +5,12 @@
 #include <WiFiClientSecure.h>
 #include <MQTTClient.h>
 #include "Adafruit_SHT4x.h"
+#include <hp_BH1750.h>
 #include <ArduinoJson.h>
 #include <Wire.h>
 
 // --------------- AWS setup ------------------------------//
-Adafruit_SHT4x sht4 = Adafruit_SHT4x();
+
 // The MQTT topics that this device should publish/subscribe
 #define AWS_IOT_PUBLISH_TOPIC "sensor/"
 #define AWS_IOT_SUBSCRIBE_TOPIC "cmd/"
@@ -17,16 +18,25 @@ WiFiClientSecure net = WiFiClientSecure();
 MQTTClient client = MQTTClient(256);
 
 // --------------- ESP setup -------------------------//
-#define pumpPin 13
+Adafruit_SHT4x sht4 = Adafruit_SHT4x();
+hp_BH1750 BH1750;
+
+#define waterPin 5
+#define nutrientPin 13
 #define lightPin 14
 
-uint32_t prevMillis;
-int pumpOnDuration = 3000;  // how long to turn on
-int pumpOffDuration = 1000; // how long to turn off
-bool pumpIsOff = true;
+uint32_t waterPrevMillis;
+int waterOnDuration = 5000;  // how long to turn on
+int waterOffDuration = 2000; // how long to turn off
+bool waterIsOff = true;
 
-const char *lightStartTime = "2002";
-const char *lightEndTime = "2010";
+uint32_t nutrientPrevMillis;
+int nutrientOnDuration = 3000;  // how long to turn on
+int nutrientOffDuration = 1000; // how long to turn off
+bool nutrientIsOff = true;
+
+const char *lightStartTime = "1544";
+const char *lightEndTime = "1545";
 
 // -------------- Time setup ----------------------- //
 const char *ntpServer = "pool.ntp.org";
@@ -35,36 +45,65 @@ const long gmtOffset_sec = -18000;
 const int daylightOffset_sec = 3600;
 
 // -------------------- AWS functions ----------------//
-// void setupSHT40()
-// {
-//   // Setup for temp/humidity sensor
-//   if (!sht4.begin())
-//   {
-//     Serial.println("Couldn't find SHT4x sensor");
-//     while (1)
-//       delay(1);
-//   }
-//   Serial.println("Found SHT4x sensor");
-//   Serial.print("Serial number 0x");
-//   Serial.println(sht4.readSerial(), HEX);
+void setupSHT40()
+{
+  // Setup for temp/humidity sensor
+  if (!sht4.begin())
+  {
+    Serial.println("Couldn't find SHT4x sensor");
+    while (1)
+      delay(1);
+  }
+  Serial.println("Found SHT4x sensor");
+  Serial.print("Serial number 0x");
+  Serial.println(sht4.readSerial(), HEX);
 
-//   // You can have 3 different precisions, higher precision takes longer
-//   sht4.setPrecision(SHT4X_HIGH_PRECISION);
+  // You can have 3 different precisions, higher precision takes longer
+  sht4.setPrecision(SHT4X_HIGH_PRECISION);
 
-//   // You can have 6 different heater settings
-//   sht4.setHeater(SHT4X_NO_HEATER);
-// }
+  // You can have 6 different heater settings
+  sht4.setHeater(SHT4X_NO_HEATER);
+}
 
-// // Create an alias for temperature and humidity readings
-// typedef std::pair<float, float> TempHumidReading;
+// Create an alias for temperature and humidity readings
+typedef std::pair<float, float> TempHumidReading;
 
-// // Function to get temperature and humidity readings
-// TempHumidReading getTempHumid()
-// {
-//   sensors_event_t humidity, temp;
-//   sht4.getEvent(&humidity, &temp); // Populate temp and humidity objects with fresh data
-//   return {temp.temperature, humidity.relative_humidity};
-// }
+// Function to get temperature and humidity readings
+TempHumidReading getTempHumid()
+{
+  if (!sht4.begin())
+  {
+    Serial.println("SHT4x sensor not setup or disconnected!");
+    while (1)
+      delay(1);
+  }
+
+  sensors_event_t humidity, temp;
+  sht4.getEvent(&humidity, &temp); // Populate temp and humidity objects with fresh data
+  return {temp.temperature, humidity.relative_humidity};
+}
+
+void setupBH1750()
+{
+  bool avail = BH1750.begin(BH1750_TO_GROUND); // BH1750_TO_GROUND or BH1750_TO_VCC for addr pin
+  if (!avail)
+  {
+    Serial.println("No BH1750 sensor found!");
+    while (1)
+      delay(1);
+  }
+
+  // BH1750.calibrateTiming();  //uncomment this line if you want to speed up your sensor
+  Serial.printf("conversion time: %dms\n", BH1750.getMtregTime());
+  BH1750.start(); // start the first measurement in setup
+}
+
+float getLuminance()
+{
+  BH1750.start();
+  float lux = BH1750.getLux();
+  return lux;
+}
 
 // void messageHandler(String &topic, String &payload)
 // {
@@ -77,8 +116,8 @@ const int daylightOffset_sec = 3600;
 //   if (strcmp(target, "pump") == 0)
 //   {
 //     pumpStartTime = doc["start_time"];
-//     pumpOnDuration = int(onDuration);
-//     pumpOffDuration = int(offDuration);
+//     waterOnDuration = int(onDuration);
+//     waterOffDuration = int(offDuration);
 //   }
 //   else if (strcmp(target, "light") == 0)
 //   {
@@ -161,31 +200,56 @@ void connectWifi()
 void setup()
 {
   Serial.begin(115200);
-  pinMode(pumpPin, OUTPUT);
+  setupSHT40();
+  setupBH1750();
+  pinMode(waterPin, OUTPUT);
+  pinMode(nutrientPin, OUTPUT);
   pinMode(lightPin, OUTPUT);
   connectWifi();
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
 }
 
-void runPump()
+void runWater()
 {
-  int currentMillis = millis();
+  int waterCrntMillis = millis();
 
-  if (pumpIsOff)
+  if (waterIsOff)
   {
 
-    if (currentMillis - prevMillis >= pumpOffDuration)
+    if (waterCrntMillis - waterPrevMillis >= waterOffDuration)
     {
-      pumpIsOff = false;
-      prevMillis = currentMillis;
-      digitalWrite(pumpPin, HIGH);
+      waterIsOff = false;
+      waterPrevMillis = waterCrntMillis;
+      digitalWrite(waterPin, HIGH);
     }
   }
-  else if (currentMillis - prevMillis >= pumpOnDuration)
+  else if (waterCrntMillis - waterPrevMillis >= waterOnDuration)
   {
-    pumpIsOff = true;
-    prevMillis = currentMillis;
-    digitalWrite(pumpPin, LOW);
+    waterIsOff = true;
+    waterPrevMillis = waterCrntMillis;
+    digitalWrite(waterPin, LOW);
+  }
+}
+
+void runNutrient()
+{
+  int nutrientCrntMillis = millis();
+
+  if (nutrientIsOff)
+  {
+
+    if (nutrientCrntMillis - nutrientPrevMillis >= nutrientOffDuration)
+    {
+      nutrientIsOff = false;
+      nutrientPrevMillis = nutrientCrntMillis;
+      digitalWrite(nutrientPin, HIGH);
+    }
+  }
+  else if (nutrientCrntMillis - nutrientPrevMillis >= nutrientOnDuration)
+  {
+    nutrientIsOff = true;
+    nutrientPrevMillis = nutrientCrntMillis;
+    digitalWrite(nutrientPin, LOW);
   }
 }
 
@@ -228,21 +292,37 @@ void runLight()
 
   if (now >= lightStartTimestamp && now < lightEndTimestamp)
   {
-    Serial.println("It is time");
+    // Serial.println("It is time");
     digitalWrite(lightPin, HIGH);
   }
   else
   {
-    Serial.println("It is not time");
+    // Serial.println("It is not time");
     digitalWrite(lightPin, LOW);
   }
 }
 
+void printSensor()
+{
+  sensors_event_t humidity, temp;
+  sht4.getEvent(&humidity, &temp); // populate temp and humidity objects with fresh data
+  Serial.print("Temperature: ");
+  Serial.print(temp.temperature);
+  Serial.println(" degrees C");
+  Serial.print("Humidity: ");
+  Serial.print(humidity.relative_humidity);
+  Serial.println("% rH");
+  float lum = getLuminance();
+  Serial.print("Luminance: ");
+  Serial.println(lum);
+}
 // -------------------------- LOOP ------------------------ //
 
 void loop()
 {
-  runPump();
+  runWater();
+  runNutrient();
   delay(1000);
+  printSensor();
   runLight();
 }
