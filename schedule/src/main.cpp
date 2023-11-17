@@ -17,6 +17,9 @@
 WiFiClientSecure net = WiFiClientSecure();
 MQTTClient client = MQTTClient(256);
 
+StaticJsonDocument<200> doc;
+char jsonBuffer[512];
+
 // --------------- ESP setup -------------------------//
 Adafruit_SHT4x sht4 = Adafruit_SHT4x();
 hp_BH1750 BH1750;
@@ -105,84 +108,81 @@ float getLuminance()
   return lux;
 }
 
-// void messageHandler(String &topic, String &payload)
-// {
-//   StaticJsonDocument<200> doc;
-//   deserializeJson(doc, payload);
-//   const char *target = doc["target"];
-//   int onDuration = int(doc["on_interval"]);
-//   int offDuration = int(doc["off_interval"]);
+void messageHandler(String &topic, String &payload)
+{
+  // TODO implement this function
+}
 
-//   if (strcmp(target, "pump") == 0)
-//   {
-//     pumpStartTime = doc["start_time"];
-//     waterOnDuration = int(onDuration);
-//     waterOffDuration = int(offDuration);
-//   }
-//   else if (strcmp(target, "light") == 0)
-//   {
-//     lightStartTime = doc["start_time"];
+void connectAWS()
+{
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
-//     lightOnDuration = int(onDuration);
-//     lightOffDuration = int(offDuration);
-//   }
-// }
+  Serial.println("Connecting to Wi-Fi");
 
-// void connectAWS()
-// {
-//   WiFi.mode(WIFI_STA);
-//   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    delay(500);
+    Serial.print(".");
+  }
 
-//   Serial.println("Connecting to Wi-Fi");
+  // Configure WiFiClientSecure to use the AWS IoT device credentials
+  net.setCACert(AWS_CERT_CA);
+  net.setCertificate(AWS_CERT_CRT);
+  net.setPrivateKey(AWS_CERT_PRIVATE);
 
-//   while (WiFi.status() != WL_CONNECTED)
-//   {
-//     delay(500);
-//     Serial.print(".");
-//   }
+  // Connect to the MQTT broker on the AWS endpoint we defined earlier
+  client.begin(AWS_IOT_ENDPOINT, 8883, net);
 
-//   // Configure WiFiClientSecure to use the AWS IoT device credentials
-//   net.setCACert(AWS_CERT_CA);
-//   net.setCertificate(AWS_CERT_CRT);
-//   net.setPrivateKey(AWS_CERT_PRIVATE);
+  // Create a message handler
+  client.onMessage(messageHandler);
 
-//   // Connect to the MQTT broker on the AWS endpoint we defined earlier
-//   client.begin(AWS_IOT_ENDPOINT, 8883, net);
+  Serial.print("Connecting to AWS IOT");
 
-//   // Create a message handler
-//   client.onMessage(messageHandler);
+  while (!client.connect(THINGNAME))
+  {
+    Serial.print(".");
+    delay(100);
+  }
 
-//   Serial.print("Connecting to AWS IOT");
+  if (!client.connected())
+  {
+    Serial.println("AWS IoT Timeout!");
+    return;
+  }
 
-//   while (!client.connect(THINGNAME))
-//   {
-//     Serial.print(".");
-//     delay(100);
-//   }
+  // Subscribe to a topic
+  client.subscribe(AWS_IOT_SUBSCRIBE_TOPIC);
+  Serial.println("AWS IoT Connected!");
+}
 
-//   if (!client.connected())
-//   {
-//     Serial.println("AWS IoT Timeout!");
-//     return;
-//   }
-
-//   // Subscribe to a topic
-//   client.subscribe(AWS_IOT_SUBSCRIBE_TOPIC);
-//   Serial.println("AWS IoT Connected!");
-// }
-
-// void publishMessage()
-// {
-//   StaticJsonDocument<200> doc;
-//   doc["time"] = millis();
-//   TempHumidReading tempHumidReading = getTempHumid();
-//   doc["temp"] = tempHumidReading.first;
-//   doc["humidity"] = tempHumidReading.second;
-
-//   char jsonBuffer[512];
-//   serializeJson(doc, jsonBuffer); // print to client
-//   client.publish(AWS_IOT_PUBLISH_TOPIC, jsonBuffer);
-// }
+void publishMessage(String sensorType, StaticJsonDocument<200> doc, char *payload)
+{
+  if (sensorType == "temperature")
+  {
+    TempHumidReading tempHumidReading = getTempHumid();
+    doc["value"] = tempHumidReading.first;
+    serializeJson(doc, jsonBuffer);
+    client.publish(String(AWS_IOT_PUBLISH_TOPIC) + String("temperature"), jsonBuffer);
+    Serial.println(doc.as<String>());
+  }
+  else if (sensorType == "humidity")
+  {
+    TempHumidReading tempHumidReading = getTempHumid();
+    doc["value"] = tempHumidReading.second;
+    serializeJson(doc, jsonBuffer);
+    client.publish(String(AWS_IOT_PUBLISH_TOPIC) + String("humidity"), jsonBuffer);
+    Serial.println(doc.as<String>());
+  }
+  else if (sensorType == "luminance")
+  {
+    float lux = getLuminance();
+    doc["value"] = lux;
+    serializeJson(doc, jsonBuffer);
+    client.publish(String(AWS_IOT_PUBLISH_TOPIC) + String("luminance"), jsonBuffer);
+    Serial.println(doc.as<String>());
+  }
+}
 
 // -------------------- ESP control functions ------------ //
 void connectWifi()
