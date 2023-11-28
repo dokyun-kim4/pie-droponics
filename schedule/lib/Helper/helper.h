@@ -1,5 +1,20 @@
+// helper.h
 #include <Arduino.h>
-#include <cstdlib>
-#include <cstring>
+#ifndef HELPER_H
+#define HELPER_H
 
-int convertToMillis(const char *timeString);
+// Function to convert time string to milliseconds
+int convertToMillis(const char *durationTime);
+
+// Structure to represent time
+struct timeStruct
+{
+    int hr;
+    int min;
+    int sec;
+};
+
+// Function to convert time string to time struct
+char *convertToChar(const char *startTime);
+
+#endif // HELPER_H

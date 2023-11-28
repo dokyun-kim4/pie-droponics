@@ -47,7 +47,6 @@ const char *ntpServer = "pool.ntp.org";
 // CONSTANTS FOR TIME OFFSET
 const long gmtOffset_sec = -18000;
 const int daylightOffset_sec = 3600;
-
 // -------------- Sensor setup ----------------------//
 // void setupSHT40()
 // {
@@ -143,12 +142,13 @@ void messageHandler(String &topic, String &payload)
   }
 
   String target = doc["target"];
-  String startTime = doc["startTime"];
+  String start = doc["startTime"];
   String onDuration = doc["onInterval"];
   String offDuration = doc["offInterval"];
 
-  int onMillis = convertToMillis(onDuration.c_str());
-  int offMillis = convertToMillis(offDuration.c_str());
+  char *startTime = convertToChar(start.c_str());
+  int onInterval = convertToMillis(onDuration.c_str());
+  int offInterval = convertToMillis(offDuration.c_str());
 
   if (strcmp(target.c_str(), "water_pump") == 0)
   {
@@ -162,9 +162,6 @@ void messageHandler(String &topic, String &payload)
   {
     Serial.println("Modifying lights");
   }
-  Serial.println(startTime);
-  Serial.println(onMillis);
-  Serial.println(offMillis);
 }
 
 void connectAWS()
