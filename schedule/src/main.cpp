@@ -30,17 +30,28 @@ hp_BH1750 BH1750;
 #define lightPin 14
 
 uint32_t waterPrevMillis;
+char *oldWaterStartTime = "120000"; // HHMMSS
+char *newWaterStartTime = "120000";
+bool startWater = false;
 int waterOnDuration = 5000;  // how long to turn on
 int waterOffDuration = 2000; // how long to turn off
 bool waterIsOff = true;
 
 uint32_t nutrientPrevMillis;
+char *oldNutrientStartTime = "120000"; // HHMMSS
+char *newNutrientStartTime = "120000";
+bool startNutrient = false;
 int nutrientOnDuration = 3000;  // how long to turn on
 int nutrientOffDuration = 1000; // how long to turn off
 bool nutrientIsOff = true;
 
-const char *lightStartTime = "154400"; // HHMMSS
-const char *lightEndTime = "154500";   // HHMMSS
+uint32_t lightPrevMillis;
+char *oldLightStartTime = "160000"; // HHMMSS
+char *newLightStartTime = "160000";
+bool startLight = false;
+int lightOnDuration = 28800000;
+int lightOffDuration = 57600000;
+bool lightIsOff = true;
 
 // -------------- Time setup ----------------------- //
 const char *ntpServer = "pool.ntp.org";
@@ -152,15 +163,24 @@ void messageHandler(String &topic, String &payload)
 
   if (strcmp(target.c_str(), "water_pump") == 0)
   {
-    Serial.println("Modifying water pump");
+    Serial.println("Modified water pump schedule");
+    newWaterStartTime = startTime;
+    waterOnDuration = onInterval;
+    waterOffDuration = offInterval;
   }
   else if (strcmp(target.c_str(), "nutrient_pump") == 0)
   {
-    Serial.println("Modifying nutrient pump");
+    Serial.println("Modified nutrient pump schedule");
+    newNutrientStartTime = startTime;
+    nutrientOnDuration = onInterval;
+    nutrientOffDuration = offInterval;
   }
   else
   {
-    Serial.println("Modifying lights");
+    Serial.println("Modified light schedule");
+    newLightStartTime = startTime;
+    lightOnDuration = onInterval;
+    lightOffDuration = offInterval;
   }
 }
 
@@ -236,18 +256,6 @@ void connectAWS()
 // }
 
 // -------------------- ESP control functions ------------ //
-void connectWifi()
-{
-  Serial.printf("Connecting to %s ", WIFI_SSID);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  while (WiFi.status() != WL_CONNECTED)
-  {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println(" CONNECTED");
-}
-
 void setup()
 {
   Serial.begin(115200);
@@ -256,12 +264,11 @@ void setup()
   pinMode(waterPin, OUTPUT);
   pinMode(nutrientPin, OUTPUT);
   pinMode(lightPin, OUTPUT);
-  connectWifi();
   connectAWS();
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
 }
 
-void runWater()
+void runWaterMillis()
 {
   int waterCrntMillis = millis();
 
@@ -283,7 +290,7 @@ void runWater()
   }
 }
 
-void runNutrient()
+void runNutrientMilis()
 {
   int nutrientCrntMillis = millis();
 
@@ -305,6 +312,114 @@ void runNutrient()
   }
 }
 
+void runLightMillis()
+{
+  int lightCrntMillis = millis();
+
+  if (lightIsOff)
+  {
+
+    if (lightCrntMillis - lightPrevMillis >= lightOffDuration)
+    {
+      lightIsOff = false;
+      lightPrevMillis = lightCrntMillis;
+      digitalWrite(lightPin, HIGH);
+    }
+  }
+  else if (lightCrntMillis - lightPrevMillis >= lightOnDuration)
+  {
+    lightIsOff = true;
+    lightPrevMillis = lightCrntMillis;
+    digitalWrite(lightPin, LOW);
+  }
+}
+
+void runWater()
+{
+  time_t now;
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo))
+  {
+    Serial.println("Failed to obtain time");
+    return;
+  }
+  now = mktime(&timeinfo);
+
+  // START TIME
+  struct tm waterStartTimeStruct = timeinfo;
+
+  // Convert HHMMSS format to hour and minutes
+  char str[7];
+  strncpy(str, oldWaterStartTime, 6);
+  str[6] = '\0'; // Null-terminate the string
+  waterStartTimeStruct.tm_hour = atoi(str);
+  waterStartTimeStruct.tm_min = atoi(str + 2);
+  waterStartTimeStruct.tm_sec = atoi(str + 4);
+  time_t waterStartTimeStamp = mktime(&waterStartTimeStruct);
+
+  if (strcmp(newWaterStartTime, oldWaterStartTime) != 0)
+  {
+    bool startWater = false;
+    oldWaterStartTime = newWaterStartTime;
+  }
+  else if (now == waterStartTimeStamp)
+  {
+    bool startWater = true;
+  }
+
+  if (startWater)
+  {
+    runWaterMillis();
+  }
+  else
+  {
+    digitalWrite(waterPin, LOW);
+  }
+}
+
+void runNutrient()
+{
+  time_t now;
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo))
+  {
+    Serial.println("Failed to obtain time");
+    return;
+  }
+  now = mktime(&timeinfo);
+
+  // START TIME
+  struct tm nutrientStartTimeStruct = timeinfo;
+
+  // Convert HHMMSS format to hour and minutes
+  char str[7];
+  strncpy(str, oldNutrientStartTime, 6);
+  str[6] = '\0'; // Null-terminate the string
+  nutrientStartTimeStruct.tm_hour = atoi(str);
+  nutrientStartTimeStruct.tm_min = atoi(str + 2);
+  nutrientStartTimeStruct.tm_sec = atoi(str + 4);
+  time_t nutrientStartTimeStamp = mktime(&nutrientStartTimeStruct);
+
+  if (strcmp(newNutrientStartTime, oldNutrientStartTime) != 0)
+  {
+    bool startNutrient = false;
+    oldNutrientStartTime = newNutrientStartTime;
+  }
+  else if (now == nutrientStartTimeStamp)
+  {
+    bool startNutrient = true;
+  }
+
+  if (startNutrient)
+  {
+    runNutrientMilis();
+  }
+  else
+  {
+    digitalWrite(nutrientPin, LOW);
+  }
+}
+
 void runLight()
 {
   time_t now;
@@ -321,49 +436,32 @@ void runLight()
 
   // Convert HHMMSS format to hour and minutes
   char str[7];
-  strncpy(str, lightStartTime, 6);
+  strncpy(str, oldWaterStartTime, 6);
   str[6] = '\0'; // Null-terminate the string
   lightStartTimeStruct.tm_hour = atoi(str);
   lightStartTimeStruct.tm_min = atoi(str + 2);
   lightStartTimeStruct.tm_sec = atoi(str + 4);
-  time_t lightStartTimestamp = mktime(&lightStartTimeStruct);
+  time_t lightStartTimeStamp = mktime(&lightStartTimeStruct);
 
-  struct tm lightEndTimeStruct = timeinfo;
-
-  char str1[7];
-  strncpy(str1, lightEndTime, 6);
-  str1[6] = '\0'; // Null-terminate the string
-  lightEndTimeStruct.tm_hour = atoi(str1);
-  lightEndTimeStruct.tm_min = atoi(str1 + 2);
-  lightEndTimeStruct.tm_sec = atoi(str1 + 4);
-  time_t lightEndTimestamp = mktime(&lightEndTimeStruct);
-
-  if (now >= lightStartTimestamp && now < lightEndTimestamp)
+  if (strcmp(newLightStartTime, oldLightStartTime) != 0)
   {
-    // Serial.println("It is time");
-    digitalWrite(lightPin, HIGH);
+    bool startLight = false;
+    oldLightStartTime = newLightStartTime;
+  }
+  else if (now == lightStartTimeStamp)
+  {
+    bool startLight = true;
+  }
+
+  if (startLight)
+  {
+    runLightMillis();
   }
   else
   {
-    // Serial.println("It is not time");
     digitalWrite(lightPin, LOW);
   }
 }
-
-// void printSensor()
-// {
-//   sensors_event_t humidity, temp;
-//   sht4.getEvent(&humidity, &temp); // populate temp and humidity objects with fresh data
-//   Serial.print("Temperature: ");
-//   Serial.print(temp.temperature);
-//   Serial.println(" degrees C");
-//   Serial.print("Humidity: ");
-//   Serial.print(humidity.relative_humidity);
-//   Serial.println("% rH");
-//   float lum = getLuminance();
-//   Serial.print("Luminance: ");
-//   Serial.println(lum);
-// }
 // -------------------------- LOOP ------------------------ //
 
 void loop()
