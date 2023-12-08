@@ -8,7 +8,8 @@
 #include <hp_BH1750.h>
 #include <ArduinoJson.h>
 #include <Wire.h>
-#include "helper.h"
+#include "actuators.h"
+#include <map>
 
 // --------------- AWS setup ------------------------------//
 
@@ -25,33 +26,22 @@ char jsonBuffer[512];
 Adafruit_SHT4x sht4 = Adafruit_SHT4x();
 hp_BH1750 BH1750;
 
-#define waterPin 5
-#define nutrientPin 13
-#define lightPin 14
+std::map<const char *, int> CONTROL_PINS = {
+    {"nutrient_pump", 13},
+    {"led", 14},
+    {"water_pump", 15}};
 
-uint32_t waterPrevMillis;
-char *oldWaterStartTime = "120000"; // HHMMSS
-char *newWaterStartTime = "120000";
-bool startWater = false;
-int waterOnDuration = 5000;  // how long to turn on
-int waterOffDuration = 2000; // how long to turn off
-bool waterIsOff = true;
+// --------------- Actuator setup -------------------//
+const int NUM_DEVICES = 3;
 
-uint32_t nutrientPrevMillis;
-char *oldNutrientStartTime = "120000"; // HHMMSS
-char *newNutrientStartTime = "120000";
-bool startNutrient = false;
-int nutrientOnDuration = 3000;  // how long to turn on
-int nutrientOffDuration = 1000; // how long to turn off
-bool nutrientIsOff = true;
+// seconds since epoch of midnight of current day (00:00 AM of current day)
+unsigned long tmrwMidnightTime = midnightEpochTime() + 24 * 3600;                       // seconds since epoch of midnight of previous day
+DeviceSchedule nutrient_pump = {IDLE, tmrwMidnightTime, 0, 24 * 3600, "nutrient_pump"}; // 0 hours on, 24 hours off
+DeviceSchedule led = {IDLE, midnightEpochTime(), 3 * 3600, 3 * 3600, "led"};            // 3 hours on, 3 hours off
+DeviceSchedule water_pump = {IDLE, tmrwMidnightTime, 0, 24 * 3600, "water_pump"};       // 0 hours on, 24 hours off
 
-uint32_t lightPrevMillis;
-char *oldLightStartTime = "160000"; // HHMMSS
-char *newLightStartTime = "160000";
-bool startLight = false;
-int lightOnDuration = 28800000;
-int lightOffDuration = 57600000;
-bool lightIsOff = true;
+// Combine all the actuators into an array
+DeviceSchedule actuators[] = {nutrient_pump, led, water_pump};
 
 // -------------- Time setup ----------------------- //
 const char *ntpServer = "pool.ntp.org";
@@ -61,21 +51,18 @@ const int daylightOffset_sec = 3600;
 // -------------- Sensor setup ----------------------//
 void setupSHT40()
 {
-  // Setup for temp/humidity sensor
   if (!sht4.begin())
   {
     Serial.println("Couldn't find SHT4x sensor");
     while (1)
       delay(1);
   }
+  delay(100);
   Serial.println("Found SHT4x sensor");
   Serial.print("Serial number 0x");
   Serial.println(sht4.readSerial(), HEX);
 
-  // You can have 3 different precisions, higher precision takes longer
   sht4.setPrecision(SHT4X_HIGH_PRECISION);
-
-  // You can have 6 different heater settings
   sht4.setHeater(SHT4X_NO_HEATER);
 }
 
@@ -85,13 +72,6 @@ typedef std::pair<float, float> TempHumidReading;
 // Function to get temperature and humidity readings
 TempHumidReading getTempHumid()
 {
-  if (!sht4.begin())
-  {
-    Serial.println("SHT4x sensor not setup or disconnected!");
-    while (1)
-      delay(1);
-  }
-
   sensors_event_t humidity, temp;
   sht4.getEvent(&humidity, &temp); // Populate temp and humidity objects with fresh data
   return {temp.temperature, humidity.relative_humidity};
@@ -123,10 +103,11 @@ float getLuminance()
 void messageHandler(String &topic, String &payload)
 {
   const size_t capacity = JSON_OBJECT_SIZE(5) + payload.length();
-
+  Serial.println("Message arrived on topic: " + topic);
+  Serial.println("Message:");
+  Serial.println(payload);
   // Allocate a buffer for the JSON document
   DynamicJsonDocument doc(capacity);
-
   // Parse the JSON string
   DeserializationError error = deserializeJson(doc, payload);
 
@@ -152,36 +133,81 @@ void messageHandler(String &topic, String &payload)
     return;
   }
 
-  String target = doc["target"];
-  String start = doc["startTime"];
-  String onDuration = doc["onInterval"];
-  String offDuration = doc["offInterval"];
+  const char *target = doc["target"];
+  // Find the device index based on the target
+  int deviceIndex = -1;
+  for (int i = 0; i < NUM_DEVICES; ++i)
+  {
+    if (strcmp(actuators[i].target, target) == 0)
+    {
+      deviceIndex = i;
+      Serial.print("Cmd target device found: ");
+      Serial.println(target);
+      break;
+    }
+  }
 
-  char *startTime = convertToChar(start.c_str());
-  int onInterval = convertToMillis(onDuration.c_str());
-  int offInterval = convertToMillis(offDuration.c_str());
+  struct tm timeinfo;
+  getLocalTime(&timeinfo);
+  time_t currentTimeMillis = mktime(&timeinfo); // seconds since epoch
+  time_t midnightEpoch = midnightEpochTime();   // seconds since epoch of midnight of current day
 
-  if (strcmp(target.c_str(), "water_pump") == 0)
+  // If the device is found, update its scheduling information
+  if (deviceIndex != -1)
   {
-    Serial.println("Modified water pump schedule");
-    newWaterStartTime = startTime;
-    waterOnDuration = onInterval;
-    waterOffDuration = offInterval;
+    const char *start = doc["startTime"];
+    Serial.println(start);
+
+    const char *onDuration = doc["onInterval"];
+    Serial.println(onDuration);
+
+    const char *offDuration = doc["offInterval"];
+    Serial.println(offDuration);
+
+    int hours, minutes, seconds;
+
+    struct tm tmTime;
+    sscanf(start, "%d:%d:%d", &hours, &minutes, &seconds);
+
+    unsigned long startTime = hours * 3600 + minutes * 60 + seconds;
+    Serial.println(startTime);
+
+    startTime += midnightEpoch;
+    Serial.println(startTime);
+
+    sscanf(onDuration, "%d:%d:%d", &hours, &minutes, &seconds);
+    actuators[deviceIndex].onDurationSeconds = hours * 3600 + minutes * 60 + seconds;
+
+    sscanf(offDuration, "%d:%d:%d", &hours, &minutes, &seconds);
+    actuators[deviceIndex].offDurationSeconds = hours * 3600 + minutes * 60 + seconds;
+
+    if (currentTimeMillis < startTime)
+    {
+      actuators[deviceIndex].currentState = IDLE;
+      actuators[deviceIndex].nextActuationTime = startTime;
+    }
+    else
+    {
+      actuators[deviceIndex].currentState = ON_DURATION;
+      actuators[deviceIndex].nextActuationTime = currentTimeMillis + actuators[deviceIndex].onDurationSeconds;
+    }
   }
-  else if (strcmp(target.c_str(), "nutrient_pump") == 0)
-  {
-    Serial.println("Modified nutrient pump schedule");
-    newNutrientStartTime = startTime;
-    nutrientOnDuration = onInterval;
-    nutrientOffDuration = offInterval;
-  }
-  else
-  {
-    Serial.println("Modified light schedule");
-    newLightStartTime = startTime;
-    lightOnDuration = onInterval;
-    lightOffDuration = offInterval;
-  }
+
+  Serial.println("Updated schedule:");
+  Serial.print("Device: ");
+  Serial.println(actuators[deviceIndex].target);
+  Serial.print("Current state: ");
+  Serial.println(actuators[deviceIndex].currentState);
+  Serial.print("Next actuation time: ");
+  Serial.println(actuators[deviceIndex].nextActuationTime);
+  Serial.print("On duration: ");
+  Serial.println(actuators[deviceIndex].onDurationSeconds);
+  Serial.print("Off duration: ");
+  Serial.println(actuators[deviceIndex].offDurationSeconds);
+
+  Serial.println("-----------------------");
+  Serial.println("Current time: ");
+  Serial.println(currentTimeMillis);
 }
 
 void connectAWS()
@@ -227,22 +253,27 @@ void connectAWS()
   Serial.println("AWS IoT Connected!");
 }
 
-void publishMessage(String sensorType, StaticJsonDocument<200> doc)
+void publishMessage(String sensorType)
 {
   if (sensorType == "temperature")
   {
     TempHumidReading tempHumidReading = getTempHumid();
     doc["value"] = tempHumidReading.first;
     serializeJson(doc, jsonBuffer);
-    client.publish(String(AWS_IOT_PUBLISH_TOPIC) + String("temperature"), jsonBuffer);
+    client.publish(String(AWS_IOT_PUBLISH_TOPIC) + String("temperature/"), jsonBuffer);
     Serial.println(doc.as<String>());
   }
   else if (sensorType == "humidity")
   {
     TempHumidReading tempHumidReading = getTempHumid();
+    if (!tempHumidReading.second)
+    {
+      Serial.println("Retry humidity reading");
+      tempHumidReading = getTempHumid();
+    }
     doc["value"] = tempHumidReading.second;
     serializeJson(doc, jsonBuffer);
-    client.publish(String(AWS_IOT_PUBLISH_TOPIC) + String("humidity"), jsonBuffer);
+    client.publish(String(AWS_IOT_PUBLISH_TOPIC) + String("humidity/"), jsonBuffer);
     Serial.println(doc.as<String>());
   }
   else if (sensorType == "luminance")
@@ -250,7 +281,7 @@ void publishMessage(String sensorType, StaticJsonDocument<200> doc)
     float lux = getLuminance();
     doc["value"] = lux;
     serializeJson(doc, jsonBuffer);
-    client.publish(String(AWS_IOT_PUBLISH_TOPIC) + String("luminance"), jsonBuffer);
+    client.publish(String(AWS_IOT_PUBLISH_TOPIC) + String("luminance/"), jsonBuffer);
     Serial.println(doc.as<String>());
   }
   doc.clear();                               // clear the JSON document for reuse
@@ -261,221 +292,43 @@ void publishMessage(String sensorType, StaticJsonDocument<200> doc)
 void setup()
 {
   Serial.begin(115200);
-  // setupSHT40();
-  // setupBH1750();
-  pinMode(waterPin, OUTPUT);
-  pinMode(nutrientPin, OUTPUT);
-  pinMode(lightPin, OUTPUT);
+  delay(1000);
+  pinMode(CONTROL_PINS["nutrient_pump"], OUTPUT);
+  pinMode(CONTROL_PINS["led"], OUTPUT);
+  pinMode(CONTROL_PINS["water_pump"], OUTPUT);
   connectAWS();
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  // // Initialize the device schedule
+  setupSHT40();
+  setupBH1750();
 }
 
-void runWaterMillis()
-{
-  int waterCrntMillis = millis();
-
-  if (waterIsOff)
-  {
-
-    if (waterCrntMillis - waterPrevMillis >= waterOffDuration)
-    {
-      waterIsOff = false;
-      waterPrevMillis = waterCrntMillis;
-      digitalWrite(waterPin, HIGH);
-    }
-  }
-  else if (waterCrntMillis - waterPrevMillis >= waterOnDuration)
-  {
-    waterIsOff = true;
-    waterPrevMillis = waterCrntMillis;
-    digitalWrite(waterPin, LOW);
-  }
-}
-
-void runNutrientMilis()
-{
-  int nutrientCrntMillis = millis();
-
-  if (nutrientIsOff)
-  {
-
-    if (nutrientCrntMillis - nutrientPrevMillis >= nutrientOffDuration)
-    {
-      nutrientIsOff = false;
-      nutrientPrevMillis = nutrientCrntMillis;
-      digitalWrite(nutrientPin, HIGH);
-    }
-  }
-  else if (nutrientCrntMillis - nutrientPrevMillis >= nutrientOnDuration)
-  {
-    nutrientIsOff = true;
-    nutrientPrevMillis = nutrientCrntMillis;
-    digitalWrite(nutrientPin, LOW);
-  }
-}
-
-void runLightMillis()
-{
-  int lightCrntMillis = millis();
-
-  if (lightIsOff)
-  {
-
-    if (lightCrntMillis - lightPrevMillis >= lightOffDuration)
-    {
-      lightIsOff = false;
-      lightPrevMillis = lightCrntMillis;
-      digitalWrite(lightPin, HIGH);
-    }
-  }
-  else if (lightCrntMillis - lightPrevMillis >= lightOnDuration)
-  {
-    lightIsOff = true;
-    lightPrevMillis = lightCrntMillis;
-    digitalWrite(lightPin, LOW);
-  }
-}
-
-void runWater()
-{
-  time_t now;
-  struct tm timeinfo;
-  if (!getLocalTime(&timeinfo))
-  {
-    Serial.println("Failed to obtain time");
-    return;
-  }
-  now = mktime(&timeinfo);
-
-  // START TIME
-  struct tm waterStartTimeStruct = timeinfo;
-
-  // Convert HHMMSS format to hour and minutes
-  char str[7];
-  strncpy(str, oldWaterStartTime, 6);
-  str[6] = '\0'; // Null-terminate the string
-  waterStartTimeStruct.tm_hour = atoi(str);
-  waterStartTimeStruct.tm_min = atoi(str + 2);
-  waterStartTimeStruct.tm_sec = atoi(str + 4);
-  time_t waterStartTimeStamp = mktime(&waterStartTimeStruct);
-
-  if (strcmp(newWaterStartTime, oldWaterStartTime) != 0)
-  {
-    bool startWater = false;
-    oldWaterStartTime = newWaterStartTime;
-  }
-  else if (now == waterStartTimeStamp)
-  {
-    bool startWater = true;
-  }
-
-  if (startWater)
-  {
-    runWaterMillis();
-  }
-  else
-  {
-    digitalWrite(waterPin, LOW);
-  }
-}
-
-void runNutrient()
-{
-  time_t now;
-  struct tm timeinfo;
-  if (!getLocalTime(&timeinfo))
-  {
-    Serial.println("Failed to obtain time");
-    return;
-  }
-  now = mktime(&timeinfo);
-
-  // START TIME
-  struct tm nutrientStartTimeStruct = timeinfo;
-
-  // Convert HHMMSS format to hour and minutes
-  char str[7];
-  strncpy(str, oldNutrientStartTime, 6);
-  str[6] = '\0'; // Null-terminate the string
-  nutrientStartTimeStruct.tm_hour = atoi(str);
-  nutrientStartTimeStruct.tm_min = atoi(str + 2);
-  nutrientStartTimeStruct.tm_sec = atoi(str + 4);
-  time_t nutrientStartTimeStamp = mktime(&nutrientStartTimeStruct);
-
-  if (strcmp(newNutrientStartTime, oldNutrientStartTime) != 0)
-  {
-    bool startNutrient = false;
-    oldNutrientStartTime = newNutrientStartTime;
-  }
-  else if (now == nutrientStartTimeStamp)
-  {
-    bool startNutrient = true;
-  }
-
-  if (startNutrient)
-  {
-    runNutrientMilis();
-  }
-  else
-  {
-    digitalWrite(nutrientPin, LOW);
-  }
-}
-
-void runLight()
-{
-  time_t now;
-  struct tm timeinfo;
-  if (!getLocalTime(&timeinfo))
-  {
-    Serial.println("Failed to obtain time");
-    return;
-  }
-  now = mktime(&timeinfo);
-
-  // START TIME
-  struct tm lightStartTimeStruct = timeinfo;
-
-  // Convert HHMMSS format to hour and minutes
-  char str[7];
-  strncpy(str, oldWaterStartTime, 6);
-  str[6] = '\0'; // Null-terminate the string
-  lightStartTimeStruct.tm_hour = atoi(str);
-  lightStartTimeStruct.tm_min = atoi(str + 2);
-  lightStartTimeStruct.tm_sec = atoi(str + 4);
-  time_t lightStartTimeStamp = mktime(&lightStartTimeStruct);
-
-  if (strcmp(newLightStartTime, oldLightStartTime) != 0)
-  {
-    bool startLight = false;
-    oldLightStartTime = newLightStartTime;
-  }
-  else if (now == lightStartTimeStamp)
-  {
-    bool startLight = true;
-  }
-
-  if (startLight)
-  {
-    runLightMillis();
-  }
-  else
-  {
-    digitalWrite(lightPin, LOW);
-  }
-}
 // -------------------------- LOOP ------------------------ //
-
 void loop()
 {
-  String sensorTypes[] = {"temperature", "humidity", "luminance"};
-  publishMessage(sensorTypes[0], doc);
-  publishMessage(sensorTypes[1], doc);
-  publishMessage(sensorTypes[2], doc);
+  static unsigned long lastPublishTime = 0;
+  const unsigned long publishInterval = 30000; // 30 seconds in milliseconds
+
+  unsigned long currentMillis = millis();
+
+  // Check if it's time to publish sensor data
+  if (currentMillis - lastPublishTime >= publishInterval)
+  {
+    lastPublishTime = currentMillis;
+
+    String sensorTypes[] = {"temperature", "humidity", "luminance"};
+    publishMessage(sensorTypes[0]);
+    publishMessage(sensorTypes[1]);
+    publishMessage(sensorTypes[2]);
+  }
 
   client.loop();
-  runWater();
-  runNutrient();
-  delay(1000);
-  runLight();
+
+  for (int i = 0; i < NUM_DEVICES; ++i)
+  {
+    updateScheduleState(actuators[i]);
+    performScheduledAction(actuators[i], CONTROL_PINS);
+  }
+
+  delay(10);
 }
