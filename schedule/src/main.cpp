@@ -260,7 +260,7 @@ void publishMessage(String sensorType)
     TempHumidReading tempHumidReading = getTempHumid();
     doc["value"] = tempHumidReading.first;
     serializeJson(doc, jsonBuffer);
-    client.publish(String(AWS_IOT_PUBLISH_TOPIC) + String("temperature/"), jsonBuffer);
+    client.publish(String(AWS_IOT_PUBLISH_TOPIC) + String("temperature"), jsonBuffer);
     Serial.println(doc.as<String>());
   }
   else if (sensorType == "humidity")
@@ -273,7 +273,7 @@ void publishMessage(String sensorType)
     }
     doc["value"] = tempHumidReading.second;
     serializeJson(doc, jsonBuffer);
-    client.publish(String(AWS_IOT_PUBLISH_TOPIC) + String("humidity/"), jsonBuffer);
+    client.publish(String(AWS_IOT_PUBLISH_TOPIC) + String("humidity"), jsonBuffer);
     Serial.println(doc.as<String>());
   }
   else if (sensorType == "luminance")
@@ -281,7 +281,7 @@ void publishMessage(String sensorType)
     float lux = getLuminance();
     doc["value"] = lux;
     serializeJson(doc, jsonBuffer);
-    client.publish(String(AWS_IOT_PUBLISH_TOPIC) + String("luminance/"), jsonBuffer);
+    client.publish(String(AWS_IOT_PUBLISH_TOPIC) + String("luminance"), jsonBuffer);
     Serial.println(doc.as<String>());
   }
   doc.clear();                               // clear the JSON document for reuse
